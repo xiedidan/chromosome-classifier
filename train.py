@@ -132,6 +132,14 @@ optimizer = optim.SGD(
     weight_decay=5e-4
 )
 
+scheduler = optim.lr_scheduler.ReduceLROnPlateau(
+    optimizer,
+    'min',
+    factor=0.5,
+    patience=20,
+    verbose=True
+)
+
 # pipeline
 def train(epoch):
     print('Training Epoch: {}'.format(epoch))
@@ -193,6 +201,9 @@ def val(epoch):
         # save checkpoint
         global best_loss
         val_loss /= len(valLoader)
+
+        # update lr
+        scheduler.step(val_loss)
 
         if val_loss < best_loss:
             print('Saving checkpoint, best loss: {}'.format(val_loss))
