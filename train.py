@@ -20,6 +20,7 @@ from PIL import Image
 
 from datasets.simple import *
 from resnet import *
+from transforms import *
 
 # config
 num_classes = 2
@@ -28,7 +29,6 @@ size = 448
 original_size = 1024
 
 start_epoch = 0
-batch_size = 1
 num_workers = 4
 best_loss = float('inf')
 
@@ -36,6 +36,7 @@ best_loss = float('inf')
 parser = argparse.ArgumentParser(description='PyTorch ResNet Classifier Training')
 parser.add_argument('--lr', default=0.00001, type=float, help='learning rate')
 parser.add_argument('--end_epoch', default=200, type=int, help='epcoh to stop training')
+parser.add_argument('--batch_size', default=2, type=int, help='batch size')
 parser.add_argument('--transfer', action='store_true', help='use pretrained feature layers for transfer learning')
 parser.add_argument('--lock_feature', action='store_true', help='lock featrue layers')
 parser.add_argument('--resume', '-r', action='store_true', help='resume from checkpoint')
@@ -51,18 +52,28 @@ torch.backends.cudnn.benchmark = True
 # data
 trainTransform = transforms.Compose([
     transforms.Grayscale(),
-    transforms.RandomRotation(45, resample=Image.BILINEAR),
-    transforms.CenterCrop(size=original_size),
-    transforms.RandomResizedCrop(original_size, scale=(0.8, 1.0), ratio=(1., 1.)),
+    transforms.RandomChoice([
+        transforms.Compose([
+            transforms.RandomRotation(45, resample=Image.BILINEAR),
+            transforms.CenterCrop(size=original_size),
+            transforms.Resize(size)
+        ]),
+        transforms.Compose([
+            transforms.CenterCrop(size=original_size),
+            transforms.RandomResizedCrop(size, scale=(0.8, 1.0), ratio=(1., 1.)),
+        ]),
+    ]),
     transforms.RandomHorizontalFlip(),
     transforms.RandomVerticalFlip(),
+    AutoLevel(),
     transforms.ToTensor()
 ])
 
 valTransform = transforms.Compose([
     transforms.Grayscale(),
-    transforms.CenterCrop(size=1024),
+    transforms.CenterCrop(size=original_size),
     transforms.Resize(size),
+    AutoLevel(),
     transforms.ToTensor()
 ])
 
@@ -74,7 +85,7 @@ trainSet = SimpleDataset(
 
 trainLoader = DataLoader(
     dataset=trainSet,
-    batch_size=batch_size,
+    batch_size=flags.batch_size,
     shuffle=True,
     num_workers=num_workers
 )
@@ -87,7 +98,7 @@ valSet = SimpleDataset(
 
 valLoader = DataLoader(
     dataset=valSet,
-    batch_size=batch_size,
+    batch_size=flags.batch_size,
     shuffle=True,
     num_workers=num_workers
 )
@@ -137,16 +148,22 @@ def train(epoch):
 
         optimizer.zero_grad()
 
-        output = model(samples)
+        if torch.cuda.device_count() > 1:
+            output = nn.parallel.data_parallel(model, samples)
+        else:
+            output = model(samples)
+        
         loss = criterion(output, gts)
 
         loss.backward()
         optimizer.step()
 
         train_loss += loss.item()
-        print('Epoch: {}, batch: {}, Sample loss: {:.5f}, batch avg loss: {:.5f}'.format(
+        print('Epoch: {}/{}, batch: {}/{}, batch loss: {:.5f}, epoch avg loss: {:.5f}'.format(
             epoch,
+            flags.end_epoch - 1,
             batch_index,
+            len(trainLoader) - 1,
             loss.item(),
             train_loss / (batch_index + 1)
         ))
@@ -165,7 +182,11 @@ def val(epoch):
             gts = gts.to(device)
             gts.contiguous()
 
-            output = model(samples)
+            if torch.cuda.device_count() > 1:
+                output = nn.parallel.data_parallel(model, samples)
+            else:
+                output = model(samples)
+
             loss = criterion(output, gts)
             val_loss += loss.item()
 

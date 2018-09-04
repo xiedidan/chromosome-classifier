@@ -113,8 +113,8 @@ class ResNet(nn.Module):
         self.maxpool2 = nn.MaxPool2d(kernel_size=3, stride=2, padding=1) # output = 3 * 3 * 512 * block.expansion
         # self.fc = nn.Linear(512 * block.expansion, num_classes)
         self.classifier = nn.Sequential(
-            nn.Conv2d(512 * block.expansion, 2048 * block.expansion, kernel_size=3), # 512 * block.expansion * 3 * 3 -> 2048 * block.expansion * 1 * 1
-            nn.Conv2d(2048 * block.expansion, num_classes, kernel_size=1)
+            nn.Conv2d(512 * block.expansion, 512 * block.expansion, kernel_size=3), # 512 * block.expansion * 3 * 3 -> 2048 * block.expansion * 1 * 1
+            nn.Conv2d(512 * block.expansion, num_classes, kernel_size=1)
         )
 
         for m in self.modules():
@@ -172,12 +172,13 @@ class ResNet(nn.Module):
         # lock feature layers if needed
         input_layers = 5
         classifier_layers = 4
+        total_layers = 628
         updating_parameters = []
 
         for i, p in enumerate(self.parameters()):
             if not lock_feature:
                 updating_parameters.append(p)
-            elif i < input_layers or i > len(self.parameters()) - classifier_layers - 1:
+            elif i < input_layers or i > total_layers - classifier_layers - 1:
                 updating_parameters.append(p)
             else:
                 p.requires_grad = False
