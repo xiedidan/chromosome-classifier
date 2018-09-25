@@ -1,6 +1,14 @@
 import torchvision.transforms as transforms
 import numpy as np
 import cv2
+import PIL
+
+class Invert(object):
+    def __init__(self):
+        pass
+    
+    def __call__(self, img):
+        return PIL.ImageOps.invert(img)
 
 class AutoLevel(object):
     def __init__(self, max_rate=0.0001, min_rate=0.0001):

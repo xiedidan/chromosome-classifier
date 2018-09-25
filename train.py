@@ -21,6 +21,7 @@ from PIL import Image
 from datasets.simple import *
 from resnet import *
 from transforms import *
+from plot import *
 
 # config
 num_classes = 2
@@ -34,7 +35,7 @@ best_loss = float('inf')
 
 # arg
 parser = argparse.ArgumentParser(description='PyTorch ResNet Classifier Training')
-parser.add_argument('--lr', default=0.00001, type=float, help='learning rate')
+parser.add_argument('--lr', default=0.0001, type=float, help='learning rate')
 parser.add_argument('--end_epoch', default=200, type=int, help='epcoh to stop training')
 parser.add_argument('--batch_size', default=2, type=int, help='batch size')
 parser.add_argument('--transfer', action='store_true', help='use pretrained feature layers for transfer learning')
@@ -43,6 +44,7 @@ parser.add_argument('--resume', '-r', action='store_true', help='resume from che
 parser.add_argument('--checkpoint', default='./checkpoint/checkpoint.pth', help='checkpoint file path')
 parser.add_argument('--root', default='/media/voyager/ssd-ext4/chromosome/', help='dataset root path')
 parser.add_argument('--device', default='cuda:0', help='device (cuda / cpu)')
+parser.add_argument('--plot', action='store_true', help='plot result')
 flags = parser.parse_args()
 
 device = torch.device(flags.device)
@@ -52,9 +54,12 @@ torch.backends.cudnn.benchmark = True
 # data
 trainTransform = transforms.Compose([
     transforms.Grayscale(),
+    AutoLevel(0.7, 0.0001),
     transforms.RandomChoice([
         transforms.Compose([
+            Invert(),
             transforms.RandomRotation(45, resample=Image.BILINEAR),
+            Invert(),
             transforms.CenterCrop(size=original_size),
             transforms.Resize(size)
         ]),
@@ -65,15 +70,14 @@ trainTransform = transforms.Compose([
     ]),
     transforms.RandomHorizontalFlip(),
     transforms.RandomVerticalFlip(),
-    AutoLevel(),
     transforms.ToTensor()
 ])
 
 valTransform = transforms.Compose([
     transforms.Grayscale(),
+    AutoLevel(0.7, 0.0001),
     transforms.CenterCrop(size=original_size),
     transforms.Resize(size),
-    AutoLevel(),
     transforms.ToTensor()
 ])
 
@@ -148,6 +152,9 @@ def train(epoch):
     train_loss = 0
 
     for batch_index, (samples, gts) in enumerate(trainLoader):
+        if flags.plot:
+            plot_classification(samples, gts, 2)
+
         samples = samples.to(device)
         samples.contiguous()
 
