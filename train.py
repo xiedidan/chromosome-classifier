@@ -103,7 +103,7 @@ valSet = SimpleDataset(
 valLoader = DataLoader(
     dataset=valSet,
     batch_size=flags.batch_size,
-    shuffle=True,
+    shuffle=False,
     num_workers=num_workers
 )
 

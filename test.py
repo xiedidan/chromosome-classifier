@@ -16,28 +16,28 @@ import torch.nn.init as init
 import torchvision
 import torchvision.models as models
 import torchvision.transforms as transforms
+from PIL import Image
 
 from datasets.simple import *
 from resnet import *
-from utils.plot import *
-from utils.export import *
+from transforms import *
+from plot import *
 
 # config
 num_classes = 2
-pretrained = False # keep this to be false, we'll load weights manually
 size = 448
 original_size = 1024
 
+pretrained = False # keep this to be false, we'll load weights manually
 num_workers = 4
 
 # arg
-parser = argparse.ArgumentParser(description='PyTorch VGG Classifier Testing')
+parser = argparse.ArgumentParser(description='PyTorch ResNet Classifier Testing')
 parser.add_argument('--batch_size', default=6, type=int, help='batch size')
-parser.add_argument('--plot', action='store_true', help='plot result')
-parser.add_argument('--save_file', default='./classification.csv', type=str, help='Filename to save results')
 parser.add_argument('--checkpoint', default='./checkpoint/checkpoint.pth', help='checkpoint file path')
-parser.add_argument('--root', default='./rsna-pneumonia-detection-challenge/', help='dataset root path')
+parser.add_argument('--root', default='/media/voyager/ssd-ext4/chromosome/', help='dataset root path')
 parser.add_argument('--device', default='cuda:0', help='device (cuda / cpu)')
+parser.add_argument('--plot', action='store_true', help='plot result')
 flags = parser.parse_args()
 
 device = torch.device(flags.device)
@@ -46,7 +46,10 @@ torch.backends.cudnn.benchmark = True
 
 # data
 testTransform = transforms.Compose([
-    transforms.Resize((size, size)),
+    transforms.Grayscale(),
+    AutoLevel(0.7, 0.0001),
+    transforms.CenterCrop(size=original_size),
+    transforms.Resize(size),
     transforms.ToTensor()
 ])
 
@@ -69,34 +72,52 @@ model = resnet101(
     num_classes=num_classes
 )
 
+# load parameter
 checkpoint = torch.load(flags.checkpoint)
 model.load_state_dict(checkpoint['net'])
 
 model.to(device)
 
+criterion = nn.CrossEntropyLoss()
+
 # pipeline
 def test():
+    print('Test')
+
     with torch.no_grad():
         model.eval()
+        test_loss = 0
 
-        for batch_index, samples in enumerate(testLoader):
-            image_paths, images, gts = samples
+        for batch_index, (paths, samples, gts) in enumerate(testLoader):
+            samples = samples.to(device)
+            samples.contiguous()
 
-            images = images.to(device)
+            gts = gts.to(device)
+            gts.contiguous()
 
-            output = model(images)
-            output = F.softmax(output, dim=len(output.size())-1)
-            output = torch.argmax(
-                output,
-                dim=len(output.size())-1,
-                keepdim=False
-            )
+            if torch.cuda.device_count() > 1:
+                output = nn.parallel.data_parallel(model, samples)
+            else:
+                output = model(samples)
 
-            # for idx, image_path in enumerate(image_paths):
-                # plot_leakage(image_path, output[idx])
+            scores, results = torch.max(torch.nn.functional.softmax(output, dim=1), dim=1)
 
-            print('\nbatch: {}\noutput: {}\ngt: {}'.format(batch_index, output, gts))
+            # collect loss
+            loss = criterion(output, gts)
+            test_loss += loss.item()
 
-# main
+            # plot
+            if flags.plot:
+                gts_array = gts.cpu().numpy()
+                scores_array = scores.cpu().numpy()
+                results_array = results.cpu().numpy()
+
+                labels = ['gt: {}, pred: {}, s:{:.2f}'.format(gt, results_array[idx], scores_array[idx]) for idx, gt in enumerate(gts_array)]
+                plot_classification(samples.cpu(), labels, 2)
+        
+        test_loss /= len(testLoader)
+        print('Avg Loss: {}'.format(test_loss))
+
+# main loop
 if __name__ == '__main__':
     test()
