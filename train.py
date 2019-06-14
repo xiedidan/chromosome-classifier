@@ -124,6 +124,8 @@ elif (flags.resume):
     best_loss = checkpoint['loss']
     start_epoch = checkpoint['epoch']
     updating_parameters = model.parameters()
+else:
+    updating_parameters = model.parameters()
 
 model.to(device)
 
@@ -139,8 +141,8 @@ optimizer = optim.SGD(
 scheduler = optim.lr_scheduler.ReduceLROnPlateau(
     optimizer,
     'min',
-    factor=0.5,
-    patience=20,
+    factor=0.2,
+    patience=3,
     verbose=True
 )
 
