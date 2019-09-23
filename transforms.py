@@ -17,6 +17,15 @@ def opening(img, kernel_size):
     
     return opening_img
 
+def huge_filter(indexes, areas, huge_threshold):
+    normal_indexes = []
+    
+    for index in indexes:
+        if areas[index] < huge_threshold:
+            normal_indexes.append(index)
+            
+    return normal_indexes
+
 def denoise(img, area_threshold):
     contours, hierarchy = cv2.findContours(img, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
     
@@ -25,13 +34,11 @@ def denoise(img, area_threshold):
         areas.append(cv2.contourArea(contour))
     
     filtered_indexes = []
-    filtered_areas = []
     for i, area in enumerate(areas):
         if area > area_threshold:
             filtered_indexes.append(i)
-            filtered_areas.append(area)
     
-    return filtered_indexes, filtered_areas, contours
+    return filtered_indexes, areas, contours
 
 def circularity(contour):
     area = cv2.contourArea(contour)
@@ -45,30 +52,58 @@ def cell_filter(indexes, areas, contours, circularity_threshold, cell_threshold)
     c_indexes = []
 
     for index, area in zip(indexes, areas):
-        if circularity(contours[index]) < circularity_threshold and area < cell_threshold:
+        if circularity(contours[index]) > circularity_threshold and area > cell_threshold:
+            pass
+        else:
             c_indexes.append(index)
 
     return c_indexes
 
-def dbscan_filter(indexes, contours, eps, min_samples):
-    d_indexes = []
-
+def dbscan_filter(indexes, contours, eps, min_samples, img_size):
     # find out contour centers
     centers = []
-    for contour in contours:
-        center, r = cv2.minEnclosingCircle(contour)
+    for index in indexes:
+        center, r = cv2.minEnclosingCircle(contours[index])
         centers.append(center)
-        
-    # clustering
+    
+    if len(centers) == 0:
+        return []
+
     dataset = np.array(centers)
     pred = DBSCAN(eps=eps, min_samples=min_samples).fit_predict(dataset)
     
-    # filter
-    for index, p in zip(indexes, pred):
-        if p != -1:
-            d_indexes.append(index)
+    # select the cluster in the center
+    clusters = {}
+    
+    for i, p in enumerate(pred):
+        center = dataset[i]
+        
+        if p!= -1:
+            if p not in clusters.keys():
+                clusters[p] = { 'center': center, 'count': 1 }
+            else:
+                clusters[p]['count'] += 1
+                clusters[p]['center'] += center
+            
+    center_dists = []
+    img_center = np.array(img_size) / 2
+    
+    for key in clusters.keys():
+        cluster = clusters[key]
+        cluster_center = cluster['center'] / cluster['count']
+        center_dists.append(np.linalg.norm(img_center - cluster_center))
+    
+    if len(center_dists) == 0:
+        return []
 
-    return d_indexes
+    selected_cluster = list(clusters.keys())[np.argmin(center_dists)]
+    selected_indexes = []
+    
+    for i, p in enumerate(pred):
+        if p == selected_cluster:
+            selected_indexes.append(indexes[i])
+        
+    return selected_indexes
 
 class AutoMask:
     def __init__(
@@ -76,14 +111,16 @@ class AutoMask:
         binary_threshold=225,
         noise_threshold=200,
         opening_kernel_size=5,
-        circularity_threshold=0.7,
+        huge_threshold=30000,
+        circularity_threshold=0.65,
         cell_threshold=7500,
         dbscan_eps=200,
-        dbscan_samples=3
+        dbscan_samples=5
         ):
         self.binary_threshold = binary_threshold
         self.noise_threshold = noise_threshold
         self.opening_kernel_size = opening_kernel_size
+        self.huge_threshold = huge_threshold
         self.circularity_threshold = circularity_threshold
         self.cell_threshold = cell_threshold
         self.dbscan_eps = dbscan_eps
@@ -95,8 +132,9 @@ class AutoMask:
         b_img = binaryzation(gray, self.binary_threshold)
         o_img = opening(b_img, self.opening_kernel_size)
         indexes, areas, contours = denoise(o_img, self.noise_threshold)
+        indexes = huge_filter(indexes, areas, huge_threshold=self.huge_threshold)
         indexes = cell_filter(indexes, areas, contours, self.circularity_threshold, self.cell_threshold)
-        indexes = dbscan_filter(indexes, contours, self.dbscan_eps, self.dbscan_samples)
+        indexes = dbscan_filter(indexes, contours, self.dbscan_eps, self.dbscan_samples, [gray.shape[1], gray.shape[0]])
 
         # create mask
         mask = np.zeros_like(gray)
