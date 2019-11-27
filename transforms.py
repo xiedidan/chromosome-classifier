@@ -1,5 +1,6 @@
 import os
 
+import torch
 import torchvision.transforms as transforms
 import numpy as np
 import cv2
@@ -146,6 +147,130 @@ class AutoMask:
         np.copyto(new_img, gray, where=(mask>127))
 
         return new_img
+
+    def extract_masks(self, img):
+        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+
+        b_img = binaryzation(gray, self.binary_threshold)
+        o_img = opening(b_img, self.opening_kernel_size)
+        indexes, areas, contours = denoise(o_img, self.noise_threshold)
+        indexes = huge_filter(indexes, areas, huge_threshold=self.huge_threshold)
+        indexes = cell_filter(indexes, areas, contours, self.circularity_threshold, self.cell_threshold)
+        indexes = dbscan_filter(indexes, contours, self.dbscan_eps, self.dbscan_samples, [gray.shape[1], gray.shape[0]])
+
+        return gray, indexes, contours
+
+    def extract_chunks(self, gray, indexes, contours, save_path, raw_filename):
+        arr = raw_filename.rsplit('.', 1)
+        file_id = arr[0]
+
+        for i in indexes:
+            contour = contours[i]
+
+            # create mask
+            mask = np.zeros_like(gray)
+            cv2.drawContours(mask, contours, i, 255, -1)
+
+            # apply mask
+            new_img = np.full_like(gray, 255)
+            np.copyto(new_img, gray, where=(mask>127))
+
+            # create bbox & crop roi
+            x, y, w, h = cv2.boundingRect(contour)
+            roi = new_img[y:y+h, x:x+w]
+
+            # write to file
+            cv2.imwrite('{}_{}.jpg'.format(os.path.join(save_path, file_id), i), roi)
+
+class PadOrCrop(object):
+    def __init__(self, target_size=256):
+        self.target_size = target_size
+
+    def __call__(self, img):
+        w, h = img.size
+
+        # pad
+        left = right = top = bottom = 0
+
+        if w < self.target_size:
+            left = (self.target_size - w) // 2
+            if (self.target_size - w) % 2 == 1:
+                right = left + 1
+            else:
+                right = left
+
+        if h < self.target_size:
+            top = (self.target_size - h) // 2
+            if (self.target_size - h) % 2 == 1:
+                bottom = top + 1
+            else:
+                bottom = top
+
+        if w < self.target_size or h < self.target_size:
+            img = PIL.ImageOps.expand(img, border=(left, top, right, bottom), fill=255)
+
+        # crop
+        left = right = top = bottom = 0
+
+        if w > self.target_size:
+            left = (w - self.target_size) // 2
+            if (w - self.target_size) % 2 == 1:
+                right = left + 1
+            else:
+                right = left
+
+        if h > self.target_size:
+            top = (h - self.target_size) // 2
+            if (h - self.target_size) % 2 == 1:
+                bottom = top + 1
+            else:
+                bottom = top
+
+        if w > self.target_size or h > self.target_size:
+            img = PIL.ImageOps.crop(img, border=(left, top, right, bottom))
+        
+        return img
+
+class Square(object):
+    def __init__(self, target_size=256):
+        self.target_size = target_size
+    
+    def __call__(self, img):
+        w, h = img.size
+
+        size = w if w > h else h
+        if size < self.target_size:
+            # pad and resize
+            img = PIL.ImageOps.pad(img, (self.target_size, self.target_size), method=PIL.Image.BILINEAR, color='white')
+        else:
+            # crop and resize
+            img = PIL.ImageOps.fit(img, (self.target_size, self.target_size))
+
+        return img
+
+class Scale(object):
+    def __init__(self, target_size=128):
+        self.target_size = target_size
+    
+    def __call__(self, img):
+        w, h = img.size
+
+        size = w if w > h else h
+        img = PIL.ImageOps.scale(img, self.target_size/size, resample=PIL.Image.BILINEAR)
+
+        return img
+
+class ChannelExpand(object):
+    def __init__(self):
+        pass
+    
+    def __call__(self, img):
+        c, _, _ = img.shape
+        
+        if c == 1:
+            img = torch.cat([img, img, img])
+
+        return img
 
 # convert PIL.Image to ndarray
 class ToNumpy(object):
