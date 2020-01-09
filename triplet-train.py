@@ -7,6 +7,7 @@ from datetime import datetime
 import gc
 import csv
 
+from apex import amp
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -66,8 +67,11 @@ parser.add_argument('--margin', default=1., type=float, help='triplet margin')
 parser.add_argument('--scheduler_step', default=800, type=int, help='epoch to reduce learning rate')
 parser.add_argument('--scheduler_gamma', default=0.1, type=float, help='step scheduler gamma')
 parser.add_argument('--checkpoint', help='checkpoint file path')
+parser.add_argument('--round_id', default=1, type=int, help='round id')
 parser.add_argument('--train_id', default=1, type=int, help='train id')
 parser.add_argument('--epoches', default=1000, type=int, help='epoch to train')
+parser.add_argument('--amp_opt', default='O0', help='AMP training optimization')
+parser.add_argument('--ohem', default='Semihard', help='Online Hard Example Mining - All, Hardest, Random, Semihard')
 flags = parser.parse_args()
 
 # config
@@ -88,9 +92,22 @@ scheduler_step = flags.scheduler_step
 scheduler_gamma = flags.scheduler_gamma
 
 checkpoint = flags.checkpoint
+round_id = flags.round_id
 train_id = flags.train_id
 epoches = flags.epoches
+amp_opt = flags.amp_opt
 
+print(flags)
+tripletSelector = None
+if flags.ohem == 'All':
+    tripletSelector = AllTripletSelector()
+elif flags.ohem == 'Hardest':
+    tripletSelector = HardestNegativeTripletSelector(margin)
+elif flags.ohem == 'Random':
+    tripletSelector = RandomNegativeTripletSelector(margin)
+elif flags.ohem == 'Semihard':
+    tripletSelector = SemihardNegativeTripletSelector(margin)
+print(tripletSelector)
 # simple dataset
 
 class ChunkDataset(Dataset):
@@ -176,9 +193,10 @@ online_train_loader = torch.utils.data.DataLoader(
 # create a embedding resnet
 
 class EmbeddingNet(nn.Module):
-    def __init__(self, resnet):
+    def __init__(self, resnet, criterion):
         super(EmbeddingNet, self).__init__()
         self.resnet = resnet
+        self.criterion = criterion
 
     def forward(self, x):
         x = self.resnet.conv1(x)
@@ -197,19 +215,20 @@ class EmbeddingNet(nn.Module):
         return x
 
 resnet = models.resnet34(pretrained=True)
-model = EmbeddingNet(resnet)
+criterion = OnlineTripletLoss(margin, tripletSelector)
+model = EmbeddingNet(resnet, criterion)
 
 model = model.to(device)
 
 # trainer
-criterion = OnlineTripletLoss(margin, RandomNegativeTripletSelector(margin))
 optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate, weight_decay=weight_decay)
 scheduler = lr_scheduler.StepLR(optimizer, scheduler_step, gamma=scheduler_gamma, last_epoch=-1)
-
 metric = AverageNonzeroTripletsMetric()
 
 if checkpoint:
     model.load_state_dict(torch.load(checkpoint))
+
+model, optimizer = amp.initialize(model, optimizer, opt_level=amp_opt)
 
 # train
 
@@ -223,7 +242,7 @@ for epoch in range(epoches):
     
     metric.reset()
     
-    with tqdm(total=iter_count, file=sys.stdout) as pbar:
+    with tqdm(total=iter_count) as pbar:
         for iter_no, (data, target) in enumerate(online_train_loader):
             target = target if len(target) > 0 else None
             if not type(data) in (tuple, list):
@@ -245,10 +264,13 @@ for epoch in range(epoches):
                 target = (target,)
                 loss_inputs += target
             
-            loss_outputs = criterion(*loss_inputs)
+            loss_outputs = model.criterion(*loss_inputs)
             loss = loss_outputs[0] if type(loss_outputs) in (tuple, list) else loss_outputs
             
-            loss.backward()
+            with amp.scale_loss(loss, optimizer) as scaled_loss:
+                scaled_loss.backward()
+
+            # loss.backward()
             optimizer.step()
 
             writer.add_scalar(
@@ -272,4 +294,4 @@ for epoch in range(epoches):
         if not os.path.exists('./models'):
             os.mkdir('./models')
             
-        torch.save(model.state_dict(), './models/EmbeddingNet-{}.pth'.format(train_id))
+        torch.save(model.state_dict(), './models/EmbeddingNet-{}-{}.pth'.format(round_id, train_id))
