@@ -1,0 +1,1 @@
+python triplet-train.py --checkpoint models/EmbeddingNet-2-2.pth --batch_size 96 --img_size 256 --device cuda:1 --data_root /home/xd/data/chromosome --img_path neg-chunk --anno_paths anno_round-2.csv --lr 1e-6 --weight_decay 1e-5 --margin 1. --scheduler_step 1200 --scheduler_gamma 0.1 --round_id 2 --train_id 4 --epoches 1600 --amp_opt O0 --ohem Random

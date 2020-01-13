@@ -248,9 +248,9 @@ for epoch in range(epoches):
             if not type(data) in (tuple, list):
                 data = (data,)
             
-            data = tuple(d.cuda() for d in data)
+            data = tuple(d.to(device) for d in data)
             if target is not None:
-                target = target.cuda()
+                target = target.to(device)
                 
             optimizer.zero_grad()
             
