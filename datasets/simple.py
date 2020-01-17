@@ -2,6 +2,7 @@ import torch
 from torch.utils.data import *
 import torchvision.transforms as transforms
 
+import pandas as pd
 from PIL import Image
 import sys
 import os
@@ -88,3 +89,52 @@ class SimpleDataset(Dataset):
                     return image_path, image, gt
                 else:
                     total_count += len(item)
+
+# combine multiple anno files
+class ChunkDataset(Dataset):
+    def __init__(
+        self,
+        data_root,
+        img_path,
+        anno_paths,
+        class_mapping,
+        transform=None
+    ):
+        self.data_root = data_root
+        self.img_path = img_path
+        self.anno_paths = anno_paths
+        self.class_mapping = class_mapping
+        self.transform = transform
+        
+        self.anno_df = []
+        
+        for anno_path in self.anno_paths:
+            anno_df = pd.read_csv(os.path.join(self.data_root, anno_path))
+            self.anno_df.append(anno_df)
+        
+        self.anno_df = pd.concat(self.anno_df, axis=0)
+        print(len(self.anno_df))
+        
+        self.anno_df = self.anno_df[self.anno_df['class']!='mixture']
+        print(len(self.anno_df))
+        
+        self.labels = list(self.anno_df['class'])
+        self.labels = torch.tensor([self.class_mapping[class_name] for class_name in self.labels])
+        
+        print(self.anno_df.head())
+        
+        self.total_len = len(self.anno_df)
+        
+    def __len__(self):
+        return self.total_len
+    
+    def __getitem__(self, index):
+        row = self.anno_df.iloc[index]
+        img_file = os.path.join(self.data_root, self.img_path, row['filename'])
+        
+        img = Image.open(img_file)
+        
+        if self.transform is not None:
+            img = self.transform(img)
+            
+        return img, self.labels[index].item()
