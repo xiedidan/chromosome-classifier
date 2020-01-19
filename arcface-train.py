@@ -109,7 +109,6 @@ elif metric == 'add_margin':
 elif metric == 'sphere':
     metric_fc = SphereProduct(512, n_classes, m=4)
 
-# TODO : switch to normal dataset
 # simple dataset
 
 class ChunkDataset(Dataset):
@@ -236,7 +235,7 @@ model, optimizer = amp.initialize(model, optimizer, opt_level=amp_opt)
 # train
 
 iter_count = len(online_train_loader)
-writer = SummaryWriter()
+writer = SummaryWriter(comment='_{}-{}'.format(round_id, train_id))
 
 model.train()
 
