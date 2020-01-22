@@ -76,7 +76,7 @@ parser.add_argument('--amp_opt', default='O0', help='AMP training optimization')
 flags = parser.parse_args()
 
 # config
-batch_size = flags.batch_size # actual batch size = 128 // 3 * 3
+batch_size = flags.batch_size # actual batch size = 128 // 3 * 3 for balanced sampler
 img_size = flags.img_size
 
 device = torch.device(flags.device)
@@ -101,6 +101,7 @@ amp_opt = flags.amp_opt
 
 print(flags)
 
+# TODO : update arcface.py to support cuda device selection
 metric_fc = nn.Linear(512, n_classes)
 if metric == 'arc_margin':
     metric_fc = ArcMarginProduct(512, n_classes, s=30, m=0.5, easy_margin=easy_margin)
@@ -244,33 +245,20 @@ for epoch in range(epoches):
     
     with tqdm(total=iter_count) as pbar:
         for iter_no, (data, target) in enumerate(online_train_loader):
-            target = target if len(target) > 0 else None
-            if not type(data) in (tuple, list):
-                data = (data,)
-            
-            data = tuple(d.to(device) for d in data)
-            if target is not None:
-                target = target.to(device)
-                
+
+            data = data.to(device)
+            target = target.to(device)
+
             optimizer.zero_grad()
-            
-            outputs = model(*data)
-            
-            if type(outputs) not in (tuple, list):
-                outputs = (outputs,)
-                
-            loss_inputs = outputs
-            if target is not None:
-                target = (target,)
-                loss_inputs += target
-            
-            loss_outputs = model.criterion(*loss_inputs)
-            loss = loss_outputs[0] if type(loss_outputs) in (tuple, list) else loss_outputs
+
+            outputs = model(data)
+            outputs = model.metric_fc(outputs, target)
+
+            loss = model.criterion(outputs, target)
             
             with amp.scale_loss(loss, optimizer) as scaled_loss:
                 scaled_loss.backward()
 
-            # loss.backward()
             optimizer.step()
 
             writer.add_scalar(
