@@ -44,6 +44,7 @@ from transforms import *
 from plot import *
 from autoencoder import *
 from arcface import *
+from focal_loss import *
 
 # consts
 class_mapping = {
@@ -66,6 +67,7 @@ parser.add_argument('--lr', default=1e-7, type=float, help='learning rate')
 parser.add_argument('--weight_decay', default=1e-6, type=float, help='weight decay')
 parser.add_argument('--metric', default='arc_margin', help='training metric - arc_margin / add_margin / sphere')
 parser.add_argument('--easy_margin', action='store_true', default=False, help='easy margin switch for arc_margin metric')
+parser.add_argument('--focal', action='store_true', default=False, help='use focal loss')
 parser.add_argument('--scheduler_step', default=800, type=int, help='epoch to reduce learning rate')
 parser.add_argument('--scheduler_gamma', default=0.1, type=float, help='step scheduler gamma')
 parser.add_argument('--checkpoint', help='checkpoint file path')
@@ -89,6 +91,7 @@ learning_rate = flags.lr
 weight_decay = flags.weight_decay
 metric = flags.metric
 easy_margin = flags.easy_margin
+focal = flags.focal
 
 scheduler_step = flags.scheduler_step
 scheduler_gamma = flags.scheduler_gamma
@@ -101,7 +104,6 @@ amp_opt = flags.amp_opt
 
 print(flags)
 
-# TODO : update arcface.py to support cuda device selection
 metric_fc = nn.Linear(512, n_classes)
 if metric == 'arc_margin':
     metric_fc = ArcMarginProduct(512, n_classes, s=30, m=0.5, easy_margin=easy_margin)
@@ -218,8 +220,11 @@ class EmbeddingNet(nn.Module):
         return x
 
 resnet = models.resnet34(pretrained=True)
-# TODO : focal loss
+
 criterion = torch.nn.CrossEntropyLoss()
+if focal:
+    criterion = FocalLoss(gamma=2)
+
 model = EmbeddingNet(resnet, metric_fc, criterion)
 
 model = model.to(device)
